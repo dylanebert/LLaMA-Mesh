@@ -1,12 +1,15 @@
 import os
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import gradio as gr
 import os
-# import spaces
-from transformers import GemmaTokenizer, AutoModelForCausalLM
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from threading import Thread
+
+import gradio as gr
+import torch
+# import spaces
+from transformers import (AutoModelForCausalLM, AutoTokenizer, GemmaTokenizer,
+                          TextIteratorStreamer)
 
 # Set an environment variable
 HF_TOKEN = os.environ.get("HF_TOKEN", None)
@@ -57,18 +60,21 @@ h1 {
 # Load the tokenizer and model
 model_path = "Zhengyi/LLaMA-Mesh"
 tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
+model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16).to("cuda")
 terminators = [
     tokenizer.eos_token_id,
     tokenizer.convert_tokens_to_ids("<|eot_id|>")
 ]
 
 
-from trimesh.exchange.gltf import export_glb
-import gradio as gr
-import trimesh
-import numpy as np
 import tempfile
+
+import gradio as gr
+import numpy as np
+import trimesh
+from trimesh.exchange.gltf import export_glb
+
+
 def apply_gradient_color(mesh_text):
     """
     Apply a gradient color to the mesh vertices based on the Y-axis and save as GLB.
@@ -120,8 +126,8 @@ def visualize_mesh(mesh_text):
 # @spaces.GPU(duration=120)
 def chat_llama3_8b(message: str, 
               history: list, 
-              temperature: float, 
-              max_new_tokens: int
+              temperature: float | None = None, 
+              max_new_tokens: int | None = None
              ) -> str:
     """
     Generate a streaming response using the llama3-8b model.
@@ -133,6 +139,11 @@ def chat_llama3_8b(message: str,
     Returns:
         str: The generated response.
     """
+    if temperature is None:
+        temperature = 0.95
+    if max_new_tokens is None:
+        max_new_tokens = 4096
+
     conversation = []
     for user, assistant in history:
         conversation.extend([{"role": "user", "content": user}, {"role": "assistant", "content": assistant}])
@@ -150,7 +161,7 @@ def chat_llama3_8b(message: str,
         temperature=temperature,
         eos_token_id=terminators,
     )
-    # This will enforce greedy generation (do_sample=False) when the temperature is passed 0, avoiding the crash.             
+
     if temperature == 0:
         generate_kwargs['do_sample'] = False
         
@@ -160,17 +171,14 @@ def chat_llama3_8b(message: str,
     outputs = []
     for text in streamer:
         outputs.append(text)
-        #print(outputs)
         yield "".join(outputs)
         
 
-# Gradio block
 chatbot=gr.Chatbot(height=450, placeholder=PLACEHOLDER, label='Gradio ChatInterface')
 
 with gr.Blocks(fill_height=True, css=css) as demo:
     with gr.Column(): 
         gr.Markdown(DESCRIPTION)
-        # gr.DuplicateButton(value="Duplicate Space for private use", elem_id="duplicate-button")
         with gr.Row():
             with gr.Column(scale=3):    
                 gr.ChatInterface(
@@ -209,7 +217,7 @@ with gr.Blocks(fill_height=True, css=css) as demo:
                         ['Create a 3D model of a chair.']
                         ],
                     cache_examples=False,
-                                )
+                )
                 gr.Markdown(LICENSE)
         
             with gr.Column(scale=2): 
@@ -219,7 +227,6 @@ with gr.Blocks(fill_height=True, css=css) as demo:
                         )
                 gr.Markdown("You can copy the generated 3d objects in the left and paste in the textbox below. Put the button and you will see the visualization of the 3D mesh.")
                 
-                # Add the text box for 3D mesh input and button
                 mesh_input = gr.Textbox(
                     label="3D Mesh Input",
                     placeholder="Paste your 3D mesh in OBJ format here...",
@@ -227,7 +234,6 @@ with gr.Blocks(fill_height=True, css=css) as demo:
                 )
                 visualize_button = gr.Button("Visualize 3D Mesh")
                 
-                # Link the button to the visualization function
                 visualize_button.click(
                     fn=apply_gradient_color,
                     inputs=[mesh_input],
